@@ -48,16 +48,17 @@ class GitRepositoryParser extends Command
 
         $path = $this->download($url, $filename);
 
-        $this->unArchive($path);
+        $this->unArchive(str_replace('\\', '/', $path));
 
-        $files = $this->getFilesFromDir(static::DOWNLOAD_PATH);
+        $files = $this->getFilesFromDir($this->getDirectory($path));
 
         $this->parseFiles($files);
     }
 
     public function getFilename(string $userRepository): string
     {
-        return str_replace('/', '\\', $userRepository) . static::FORMAT;
+        return $userRepository . static::FORMAT;
+        // return str_replace('/', '\\', $userRepository) . static::FORMAT;
     }
 
     public function getUrl(string $userRepository): string
@@ -83,7 +84,7 @@ class GitRepositoryParser extends Command
             mkdir($dir);
         }
 
-        file_put_contents($path, $response->getBody()->getContents());
+        file_put_contents($path, $response->getBody());
 
         return $path;
     }
@@ -128,6 +129,7 @@ class GitRepositoryParser extends Command
     {
         $archive = new ZipArchive();
         $archive->open($path);
+        echo $this->getDirectory($path);
         $answer = $archive->extractTo($this->getDirectory($path));
         $archive->close();
         return $answer;
@@ -135,7 +137,7 @@ class GitRepositoryParser extends Command
 
     public function getDirectory(string $path): string
     {
-        return substr($path, 0, strrpos($path, '\\'));
+        return substr($path, 0, strrpos($path, '/'));
     }
 
     protected function getFilesFromDir(string $path) : Finder
@@ -169,4 +171,5 @@ class GitRepositoryParser extends Command
 
         return $matches['method'];
     }
+    
 }
