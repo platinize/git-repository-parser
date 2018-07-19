@@ -11,18 +11,12 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Finder\Finder;
 use ZipArchive;
+use App\Downloader\Downloader;
+use App\Spreader\Spreader;
+use App\Parser\Parser;
 
 class GitRepositoryParser extends Command
 {
-    const DOWNLOADS_PATH = 'storage';
-
-    const DOMAIN = 'https://github.com/';
-
-    const ZIP_PATH = '/archive/master.zip';
-
-    const FORMAT = '.zip';
-
-    const PUBLIC_FUNCTIONS_PATTERN = '/(?P<method>((a|s).*)?public([\w\s]*)?function\s[\w]+\([^)]*\).*)/';
 
     /** @var ProgressBar */
     protected $progressBar;
@@ -34,8 +28,7 @@ class GitRepositoryParser extends Command
     {
         $this->setName('search')
            ->setDescription('Search public functions in repository')
-           ->addArgument('user/repository', InputArgument::REQUIRED,
-               'Repository for search in format [User name]/[repository name]');
+           ->addArgument('user/repository', InputArgument::REQUIRED, 'Repository for search in format [User name]/[repository name]');
     }
 
     public function execute(InputInterface $input, OutputInterface $output): void
@@ -46,130 +39,42 @@ class GitRepositoryParser extends Command
 
         $filename = $this->getFilename($input->getArgument('user/repository'));
 
-        $path = $this->download($url, $filename);
+        $path = $this->getDownloader()->download($url, $filename);
+        
+        $this->getSpreader()->unArchive($path);
 
-        $this->unArchive(str_replace('\\', '/', $path));
+        $parser = $this->getParser();
 
-        $files = $this->getFilesFromDir($this->getDirectory($path));
+        $files = $parser->getFilesFromDir($parser->getDirectory($path));
 
-        $this->parseFiles($files);
+        $parser->parseFiles($files);
     }
 
     public function getFilename(string $userRepository): string
     {
-        return $userRepository . static::FORMAT;
-        // return str_replace('/', '\\', $userRepository) . static::FORMAT;
+        return $userRepository . '.zip';
+    }
+
+    public function getDownloader()
+    {
+        return new Downloader($this->output);
     }
 
     public function getUrl(string $userRepository): string
     {
-        return static::DOMAIN . $userRepository . static::ZIP_PATH;
+        return "https://github.com/{$userRepository}/archive/master.zip";
     }
 
-    public function download(string $url, string $filename): string
+    public function getSpreader(): Spreader
     {
-        $response = $this->getClient()->request('get', $url, [
-            'progress' => [$this, 'onProgress'],
-        ]);
-
-        $this->output->writeln('');
-
-        $path = $this->getPath($filename);
-
-        if (! file_exists($dir = static::DOWNLOADS_PATH)) {
-            mkdir($dir);
-        }
-
-        if (! file_exists($dir = dirname($path))) {
-            mkdir($dir);
-        }
-
-        file_put_contents($path, $response->getBody());
-
-        return $path;
+        return new Spreader;
     }
 
-    public function onProgress(int $total, int $downloaded): void
+    public function getParser(): Parser
     {
-        if ($total <= 0) {
-            return;
-        }
-
-        if (! $this->progressBar) {
-            $this->progressBar = $this->createProgressBar(100);
-        }
-
-        $this->progressBar->setProgress(100 / $total * $downloaded);
+        return new Parser($this->output);
     }
 
-    public function getPath(string $filename): string
-    {
-        return static::DOWNLOADS_PATH . DIRECTORY_SEPARATOR . $filename;
-    }
-
-    public function getClient(): ClientInterface
-    {
-        return new Client;
-    }
-
-
-    public function createProgressBar(int $max): ProgressBar
-    {
-        $bar = new ProgressBar($this->output, $max);
-
-        $bar->setBarCharacter('<fg=green>·</>');
-        $bar->setEmptyBarCharacter('<fg=red>·</>');
-        $bar->setProgressCharacter('<fg=green>ᗧ</>');
-        $bar->setFormat("%current:8s%/%max:-8s% %bar% %percent:5s%% %elapsed:7s%/%estimated:-7s% %memory%");
-
-        return $bar;
-    }
-
-    public function unArchive($path)
-    {
-        $archive = new ZipArchive();
-        $archive->open($path);
-        echo $this->getDirectory($path);
-        $answer = $archive->extractTo($this->getDirectory($path));
-        $archive->close();
-        return $answer;
-    }
-
-    public function getDirectory(string $path): string
-    {
-        return substr($path, 0, strrpos($path, '/'));
-    }
-
-    protected function getFilesFromDir(string $path) : Finder
-    {
-        $finder = new Finder;
-
-        return $finder->in($this->getDirectory($path))->files()->name('*.php');
-    }
-
-    protected function parseFiles(Finder $files) : void
-    {
-        foreach ($files as $file) {
-            $path = $file->getRelativePathname();
-            $content = $file->getContents();
-            $methodsList = $this->parsePublicMethods($content);
-
-            if (!count($methodsList)) {
-                continue;
-            }
-
-            $this->output->writeln($path);
-            foreach ($methodsList as $method) {
-                $this->output->writeln("\t" . $method);
-            }
-        }
-    }
-
-    protected function parsePublicMethods(string $content) : array
-    {
-        preg_match_all(static::PUBLIC_FUNCTIONS_PATTERN, $content, $matches);
-
-        return $matches['method'];
-    }
+    
     
 }
